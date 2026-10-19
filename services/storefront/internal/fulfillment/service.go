@@ -138,7 +138,7 @@ func (s *Service) Verify(ctx context.Context, headers http.Header, path string, 
 
 // Reconcile advances only the existing authorized delivery order, never creates a new card.
 func (s *Service) Reconcile(ctx context.Context) error {
-	rows, e := s.Store.DB.Query(ctx, `SELECT f.order_id FROM fulfillment_orders f JOIN orders o ON o.id=f.order_id WHERE o.payment_status='paid' AND f.status NOT IN ('succeeded','failed_safe') AND f.checked_at<$1 ORDER BY f.checked_at LIMIT 30`, time.Now().UnixMilli()-10000)
+	rows, e := s.Store.DB.Query(ctx, `SELECT f.order_id FROM fulfillment_orders f JOIN orders o ON o.id=f.order_id WHERE o.payment_status='paid' AND f.status NOT IN ('succeeded','failed_safe') AND f.checked_at<$1 AND f.next_sync_at<$2 ORDER BY f.next_sync_at,f.checked_at LIMIT 30`, time.Now().UnixMilli()-10000, time.Now().UnixMilli())
 	if e != nil {
 		return e
 	}
@@ -156,12 +156,20 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	var failures []error
 	for _, id := range ids {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if e = s.Sync(ctx, id); e != nil {
-			return e
+			failures = append(failures, e)
+			// Preserve confirmed status; schedule failed orders behind other due work.
+			if _, saveErr := s.Store.DB.Exec(ctx, `UPDATE fulfillment_orders SET sync_failures=LEAST(sync_failures+1,8),sync_error='暂时无法核对最新进度，已保留上次确认结果。',next_sync_at=$1+LEAST(300000,15000*(1::bigint<<LEAST(sync_failures,4))) WHERE order_id=$2`, time.Now().UnixMilli(), id); saveErr != nil {
+				failures = append(failures, saveErr)
+			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 func (s *Service) Sync(ctx context.Context, id string) error {
 	var result struct {
@@ -185,7 +193,7 @@ func (s *Service) Sync(ctx context.Context, id string) error {
 	if e != nil {
 		return e
 	}
-	tag, e := tx.Exec(ctx, `UPDATE fulfillment_orders SET status=$1,message=$2,remote_updated_at=$3,checked_at=$4 WHERE order_id=$5 AND remote_updated_at<=$3 AND status NOT IN ('succeeded','failed_safe')`, result.Status, result.Message, result.UpdatedAt, time.Now().UnixMilli(), id)
+	tag, e := tx.Exec(ctx, `UPDATE fulfillment_orders SET status=$1,message=$2,remote_updated_at=$3,checked_at=$4,sync_failures=0,sync_error='',next_sync_at=0 WHERE order_id=$5 AND remote_updated_at<=$3 AND status NOT IN ('succeeded','failed_safe')`, result.Status, result.Message, result.UpdatedAt, time.Now().UnixMilli(), id)
 	if e != nil {
 		return e
 	}
