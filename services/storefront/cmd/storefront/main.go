@@ -40,6 +40,9 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
+	if len(os.Args) == 2 && os.Args[1] == "bootstrap-voucher-admin" {
+		return bootstrapVoucherAdmin()
+	}
 	if len(os.Args) != 2 {
 		return errors.New("usage: storefront api|worker|check-runtime|check-import-bindings|migrate|grant-runtime|health-api|health-worker|import-d1-check|import-d1-apply|import-d1-reconcile|telegram-configure")
 	}

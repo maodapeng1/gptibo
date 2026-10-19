@@ -116,7 +116,7 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 		}
 		// Order preparation and fulfillment can make several bounded supplier calls.
 		// Leave time for the whole chain, not just its first 10-second request.
-		if c.Request.Method == http.MethodPost && (c.FullPath() == "/api/orders" || c.FullPath() == "/api/orders/:id/fulfillment" || c.FullPath() == "/api/orders/:id/delivery-link") || strings.Contains(c.FullPath(), "/xgift/") || c.FullPath() == "/api/admin/orders/:id/actions" || c.FullPath() == "/api/admin/recharge/reconcile" {
+		if c.Request.Method == http.MethodPost && (c.FullPath() == "/api/orders" || c.FullPath() == "/api/orders/:id/fulfillment" || c.FullPath() == "/api/orders/:id/delivery-link" || c.FullPath() == "/api/vouchers/preview" || c.FullPath() == "/api/admin/vouchers/:id/actions") || strings.Contains(c.FullPath(), "/xgift/") || c.FullPath() == "/api/admin/orders/:id/actions" || c.FullPath() == "/api/admin/recharge/reconcile" {
 			timeout = 45 * time.Second
 		}
 		if c.FullPath() == "/api/orders/:id/session-precheck" || c.FullPath() == "/api/admin/orders/:id/recharge-retry" {
@@ -243,6 +243,7 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 			out := gin.H{"authenticated": e == nil, "mailReady": a.Ready()}
 			if role == "admin" {
 				out["configured"] = a.AdminConfigured()
+				out["passwordReady"] = a.PasswordReady()
 				if e == nil {
 					out["username"] = a.Username()
 				}
@@ -261,6 +262,37 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 	group.POST("/admin/login/email-code", send("admin"))
 	group.POST("/admin/login", verify("admin"))
 	group.POST("/admin/logout", logout("admin"))
+	group.POST("/admin/password-login", func(c *gin.Context) {
+		var in struct {
+			Username       string `json:"username"`
+			Password       string `json:"password"`
+			Code           string `json:"code"`
+			TurnstileToken string `json:"turnstileToken"`
+		}
+		if !read(c, &in) {
+			return
+		}
+		if opts.Rehearsal {
+			fail(c, fault.New(503, "维护模式暂不开放管理员登录。"))
+			return
+		}
+		if opts.AuthTurnstile {
+			if e := opts.Turnstile.VerifyAction(c.Request.Context(), verificationHost(c.Request.Context()), in.TurnstileToken, "admin_verify"); e != nil {
+				fail(c, e)
+				return
+			}
+		}
+		value, e := a.PasswordLogin(c.Request.Context(), in.Username, in.Password, in.Code, c.ClientIP())
+		if e != nil {
+			fail(c, e)
+			return
+		}
+		c.Set("audit-role", "admin")
+		c.Set("audit-session", a.Fingerprint("session", value))
+		cookie(c, "admin", value, 3*24*3600)
+		c.JSON(200, gin.H{"ok": true})
+	})
+
 	group.GET("/partner/auth/session", session("partner"))
 	group.POST("/partner/auth/send", send("partner"))
 	group.POST("/partner/auth/verify", verify("partner"))
@@ -575,6 +607,7 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 			return previousSnapshot(ctx, tx, o, in)
 		}
 	}
+	registerVouchers(r, group, admin, orderService, opts.Fulfillment, token)
 	registerFulfillment(r, group, orderService, opts.Fulfillment, token)
 	registerOrders(group, admin, orderService, token)
 	registerRecharge(r, group, admin, orderService, opts.Recharge, token)

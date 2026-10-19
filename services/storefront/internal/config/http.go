@@ -124,6 +124,10 @@ func LoadHTTP() (HTTP, error) {
 			return h, errors.New("security audit requires an alert recipient")
 		}
 	}
+	h.Auth.AdminPasswordHash, e = optionalSecret("ADMIN_PASSWORD_HASH")
+	if e != nil {
+		return h, e
+	}
 	h.Auth.AdminUsername = os.Getenv("ADMIN_USERNAME")
 	h.Auth.AdminEmail = os.Getenv("ADMIN_EMAIL")
 	if os.Getenv("ADMIN_ACCESS_ISSUER") != "" || os.Getenv("ADMIN_ACCESS_AUDIENCE") != "" {

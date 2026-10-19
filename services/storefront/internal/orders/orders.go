@@ -77,7 +77,7 @@ func Get(ctx context.Context, q Query, id string, access *Access, lock bool) (Or
 	sql := `SELECT to_jsonb(o) FROM orders o WHERE id=$1`
 	args := []any{id}
 	if access != nil {
-		sql += ` AND is_test=0 AND (owner_hash=$2 OR customer_email=NULLIF($3,''))`
+		sql += ` AND is_test=0 AND (owner_hash=$2 OR customer_email=NULLIF($3,'') OR EXISTS(SELECT 1 FROM order_guest_access ga WHERE ga.order_id=o.id AND ga.buyer_hash=$2))`
 		args = append(args, access.OwnerHash, access.Email)
 		if scope := domains.Current(ctx); scope.PartnerID != "" {
 			sql += ` AND partner_id=$4`

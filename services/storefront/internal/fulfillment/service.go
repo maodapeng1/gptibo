@@ -89,6 +89,9 @@ func (s *Service) Ticket(ctx context.Context, id string, a *orders.Access) (stri
 	return s.Origin + "/deliver/#ticket=" + url.QueryEscape(result.Ticket), nil
 }
 func (s *Service) Authorize(ctx context.Context, id string, execute bool) (bool, error) {
+	return s.AuthorizeContext(ctx, id, execute, "", false)
+}
+func (s *Service) AuthorizeContext(ctx context.Context, id string, execute bool, contextID string, preview bool) (bool, error) {
 	tx, e := s.Store.DB.Begin(ctx)
 	if e != nil {
 		return false, e
@@ -104,6 +107,25 @@ func (s *Service) Authorize(ctx context.Context, id string, execute bool) (bool,
 	var state string
 	if e = tx.QueryRow(ctx, `SELECT status FROM fulfillment_orders WHERE order_id=$1 FOR UPDATE`, id).Scan(&state); e != nil {
 		return false, e
+	}
+	var voucherID string
+	ev := tx.QueryRow(ctx, `SELECT id FROM vouchers WHERE sales_order_id=$1 AND state<>'revoked'`, id).Scan(&voucherID)
+	if ev != nil && ev != pgx.ErrNoRows {
+		return false, ev
+	}
+	if ev == nil {
+		var valid bool
+		if preview {
+			e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM vouchers v JOIN voucher_contexts c ON c.voucher_id=v.id WHERE v.id=$1 AND c.id=$2 AND ((v.state='active' AND v.expires_at>$3 AND c.expires_at>$3) OR (v.state IN ('locked','review_required','redeemed') AND EXISTS(SELECT 1 FROM voucher_redemptions vr WHERE vr.voucher_id=v.id AND vr.context_id=c.id))))`, voucherID, contextID, time.Now().UnixMilli()).Scan(&valid)
+		} else {
+			e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM vouchers v JOIN voucher_redemptions vr ON vr.voucher_id=v.id WHERE v.id=$1 AND v.state IN ('locked','review_required','redeemed') AND ($2=false OR vr.context_id=$3))`, voucherID, execute, contextID).Scan(&valid)
+		}
+		if e != nil {
+			return false, e
+		}
+		if !valid {
+			return false, nil
+		}
 	}
 	if execute {
 		if state == "succeeded" || state == "failed_safe" {
@@ -138,7 +160,7 @@ func (s *Service) Verify(ctx context.Context, headers http.Header, path string, 
 
 // Reconcile advances only the existing authorized delivery order, never creates a new card.
 func (s *Service) Reconcile(ctx context.Context) error {
-	rows, e := s.Store.DB.Query(ctx, `SELECT f.order_id FROM fulfillment_orders f JOIN orders o ON o.id=f.order_id WHERE o.payment_status='paid' AND f.status NOT IN ('succeeded','failed_safe') AND f.checked_at<$1 AND f.next_sync_at<$2 ORDER BY f.next_sync_at,f.checked_at LIMIT 30`, time.Now().UnixMilli()-10000, time.Now().UnixMilli())
+	rows, e := s.Store.DB.Query(ctx, `SELECT f.order_id FROM fulfillment_orders f JOIN orders o ON o.id=f.order_id WHERE o.payment_status='paid' AND (NOT EXISTS(SELECT 1 FROM vouchers v WHERE v.sales_order_id=o.id) OR EXISTS(SELECT 1 FROM voucher_dispatch vd WHERE vd.order_id=o.id)) AND f.status NOT IN ('succeeded','failed_safe') AND f.checked_at<$1 AND f.next_sync_at<$2 ORDER BY f.next_sync_at,f.checked_at LIMIT 30`, time.Now().UnixMilli()-10000, time.Now().UnixMilli())
 	if e != nil {
 		return e
 	}
@@ -173,9 +195,15 @@ func (s *Service) Reconcile(ctx context.Context) error {
 }
 func (s *Service) Sync(ctx context.Context, id string) error {
 	var result struct {
-		Status    string `json:"status"`
-		Message   string `json:"message"`
-		UpdatedAt int64  `json:"updatedAt"`
+		Status              string  `json:"status"`
+		Message             string  `json:"message"`
+		UpdatedAt           int64   `json:"updatedAt"`
+		RemoteOrderID       *string `json:"fulfillmentId"`
+		CardOrderID         *string `json:"cardOrderId"`
+		ProviderOperationID *string `json:"providerOperationId"`
+		ErrorCode           *string `json:"errorCode"`
+		ErrorRequestID      *string `json:"errorRequestId"`
+		AccountEmailMasked  *string `json:"accountEmailMasked"`
 	}
 	if e := s.Call(ctx, map[string]any{"action": "progress", "salesOrderId": id}, &result); e != nil {
 		return e
@@ -193,7 +221,7 @@ func (s *Service) Sync(ctx context.Context, id string) error {
 	if e != nil {
 		return e
 	}
-	tag, e := tx.Exec(ctx, `UPDATE fulfillment_orders SET status=$1,message=$2,remote_updated_at=$3,checked_at=$4,sync_failures=0,sync_error='',next_sync_at=0 WHERE order_id=$5 AND remote_updated_at<=$3 AND status NOT IN ('succeeded','failed_safe')`, result.Status, result.Message, result.UpdatedAt, time.Now().UnixMilli(), id)
+	tag, e := tx.Exec(ctx, `UPDATE fulfillment_orders SET status=$1,message=$2,remote_updated_at=$3,checked_at=$4,sync_failures=0,sync_error='',next_sync_at=0,remote_order_id=COALESCE($6,remote_order_id),card_order_id=COALESCE($7,card_order_id),provider_operation_id=COALESCE($8,provider_operation_id),error_code=COALESCE($9,error_code),error_request_id=COALESCE($10,error_request_id),account_email_masked=COALESCE($11,account_email_masked) WHERE order_id=$5 AND remote_updated_at<=$3 AND status NOT IN ('succeeded','failed_safe')`, result.Status, result.Message, result.UpdatedAt, time.Now().UnixMilli(), id, result.RemoteOrderID, result.CardOrderID, result.ProviderOperationID, result.ErrorCode, result.ErrorRequestID, result.AccountEmailMasked)
 	if e != nil {
 		return e
 	}
@@ -210,6 +238,30 @@ func (s *Service) Sync(ctx context.Context, id string) error {
 		}
 		if next.Status != o.Status {
 			if _, e = orders.Change(ctx, tx, o, next, "system", "fulfillment-sync", "同步充值系统执行状态"); e != nil {
+				return e
+			}
+		}
+	}
+	if tag.RowsAffected() > 0 {
+		nextVoucher := "locked"
+		nextRedemption := "processing"
+		if result.Status == "succeeded" {
+			nextVoucher = "redeemed"
+			nextRedemption = "succeeded"
+		} else if result.Status == "failed_safe" || result.Status == "unknown" || result.Status == "payment_blocked" || result.Status == "action_required" {
+			nextVoucher = "review_required"
+			nextRedemption = "review_required"
+		}
+		_, e = tx.Exec(ctx, `UPDATE vouchers SET state=$1,version=version+1 WHERE sales_order_id=$2 AND state IN ('locked','review_required') AND state<>$1`, nextVoucher, id)
+		if e != nil {
+			return e
+		}
+		_, e = tx.Exec(ctx, `UPDATE voucher_redemptions SET state=$1 WHERE order_id=$2`, nextRedemption, id)
+		if e != nil {
+			return e
+		}
+		if result.Status != "awaiting_session" {
+			if _, e = tx.Exec(ctx, `UPDATE voucher_dispatch SET state='accepted' WHERE order_id=$1`, id); e != nil {
 				return e
 			}
 		}

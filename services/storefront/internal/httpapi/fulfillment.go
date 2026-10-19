@@ -63,16 +63,28 @@ func registerFulfillment(r *gin.Engine, group *gin.RouterGroup, o orders.Service
 		var body struct {
 			SalesOrderID string `json:"salesOrderId"`
 			Phase        string `json:"phase"`
+			ContextID    string `json:"contextId"`
 		}
-		if json.Unmarshal(raw, &body) != nil || body.SalesOrderID == "" || (body.Phase != "inspect" && body.Phase != "execute") {
+		if json.Unmarshal(raw, &body) != nil || body.SalesOrderID == "" || (body.Phase != "inspect" && body.Phase != "execute" && body.Phase != "preview") {
 			fail(c, fault.New(400, "请求无效。"))
 			return
 		}
-		ok, e := s.Authorize(c.Request.Context(), body.SalesOrderID, body.Phase == "execute")
+		ok, e := s.AuthorizeContext(c.Request.Context(), body.SalesOrderID, body.Phase == "execute", body.ContextID, body.Phase == "preview")
 		if e != nil {
 			fail(c, e)
 			return
 		}
-		c.JSON(200, gin.H{"authorized": ok})
+		out := gin.H{"authorized": ok}
+		if ok {
+			var contextID, operationID, accountHash string
+			e = s.Store.DB.QueryRow(c.Request.Context(), `SELECT context_id,operation_id,account_hash FROM voucher_redemptions WHERE order_id=$1`, body.SalesOrderID).Scan(&contextID, &operationID, &accountHash)
+			if e == nil {
+				out["contextId"] = contextID
+				out["operationId"] = operationID
+				out["accountHash"] = accountHash
+				out["voucher"] = true
+			}
+		}
+		c.JSON(200, out)
 	})
 }

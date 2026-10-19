@@ -1,0 +1,14 @@
+# Optional, explicit mail-free operator authentication. Generate private files with
+# VOUCHER_ADMIN_SECRET_DIR=/opt/gptibo-shop/.secrets ./storefront bootstrap-voucher-admin
+services:
+  api:
+    environment:
+      ADMIN_USERNAME: voucher-admin
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/voucher_admin_password_hash
+      ADMIN_TOTP_SECRET_FILE: /run/secrets/voucher_admin_totp
+    secrets: [app_password, auth_secret, fulfillment_secret, voucher_admin_password_hash, voucher_admin_totp]
+secrets:
+  voucher_admin_password_hash:
+    file: .secrets/voucher-admin-password-hash
+  voucher_admin_totp:
+    file: .secrets/voucher-admin-totp

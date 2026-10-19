@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
 	"net/mail"
 	"strings"
 	"time"
@@ -50,6 +51,7 @@ func (a *Service) Invite(ctx context.Context, id, origin string) error {
 
 type Config struct {
 	Secret, AdminUsername, AdminEmail, AdminTOTP string
+	AdminPasswordHash                            string
 	Sender                                       Sender
 }
 type Service struct {
@@ -82,9 +84,15 @@ func New(s *store.Store, cfg Config) (*Service, error) {
 		}
 		a.key = key
 	}
-	if cfg.AdminUsername != "" || cfg.AdminEmail != "" || cfg.AdminTOTP != "" {
+	if cfg.AdminPasswordHash != "" {
+		cost, e := bcrypt.Cost([]byte(cfg.AdminPasswordHash))
+		if e != nil || cost < 12 {
+			return nil, errors.New("ADMIN_PASSWORD_HASH requires bcrypt cost >= 12")
+		}
+	}
+	if cfg.AdminUsername != "" || cfg.AdminEmail != "" || cfg.AdminTOTP != "" || cfg.AdminPasswordHash != "" {
 		email, e := Email(cfg.AdminEmail)
-		if len(cfg.AdminUsername) == 0 || len(cfg.AdminUsername) > 80 || !security.ValidTOTP(cfg.AdminTOTP) || e != nil {
+		if len(cfg.AdminUsername) == 0 || len(cfg.AdminUsername) > 80 || !security.ValidTOTP(cfg.AdminTOTP) || (e != nil && (cfg.AdminPasswordHash == "" || cfg.AdminEmail != "")) {
 			return nil, errors.New("complete administrator username, email and TOTP configuration required")
 		}
 		a.cfg.AdminEmail = email
@@ -109,6 +117,9 @@ func (a *Service) version(role, subject string, version int64) string {
 	value := fmt.Sprintf("%s:%s:%d", role, subject, version)
 	if role == "admin" {
 		value += ":" + a.cfg.AdminEmail + ":" + a.cfg.AdminTOTP
+		if a.cfg.AdminPasswordHash != "" {
+			value += ":" + a.cfg.AdminPasswordHash
+		}
 	}
 	return security.MAC(a.key, "credential:"+value)
 }

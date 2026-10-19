@@ -189,7 +189,7 @@ func EmailKind(plan string) string {
 	return ""
 }
 func (s Service) CustomerList(ctx context.Context, access Access) (map[string]any, error) {
-	list, e := List(ctx, s.Store.DB, `SELECT to_jsonb(o) FROM orders o WHERE is_test=0 AND (owner_hash=$1 OR customer_email=NULLIF($2,'')) AND ($3='' OR partner_id=$3) ORDER BY created_at DESC,id DESC LIMIT 100`, access.OwnerHash, access.Email, domains.Current(ctx).PartnerID)
+	list, e := List(ctx, s.Store.DB, `SELECT to_jsonb(o) FROM orders o WHERE is_test=0 AND (owner_hash=$1 OR customer_email=NULLIF($2,'') OR EXISTS(SELECT 1 FROM order_guest_access ga WHERE ga.order_id=o.id AND ga.buyer_hash=$1)) AND ($3='' OR partner_id=$3) ORDER BY created_at DESC,id DESC LIMIT 100`, access.OwnerHash, access.Email, domains.Current(ctx).PartnerID)
 	if e != nil {
 		return nil, e
 	}
@@ -207,7 +207,7 @@ func (s Service) CustomerList(ctx context.Context, access Access) (map[string]an
 		return nil, e
 	}
 	defer tx.Rollback(ctx)
-	list, e = List(ctx, tx, `SELECT to_jsonb(o) FROM orders o WHERE is_test=0 AND (owner_hash=$1 OR customer_email=NULLIF($2,'')) AND ($3='' OR partner_id=$3) ORDER BY created_at DESC,id DESC LIMIT 100`, access.OwnerHash, access.Email, domains.Current(ctx).PartnerID)
+	list, e = List(ctx, tx, `SELECT to_jsonb(o) FROM orders o WHERE is_test=0 AND (owner_hash=$1 OR customer_email=NULLIF($2,'') OR EXISTS(SELECT 1 FROM order_guest_access ga WHERE ga.order_id=o.id AND ga.buyer_hash=$1)) AND ($3='' OR partner_id=$3) ORDER BY created_at DESC,id DESC LIMIT 100`, access.OwnerHash, access.Email, domains.Current(ctx).PartnerID)
 	if e != nil {
 		return nil, e
 	}
