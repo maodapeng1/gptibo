@@ -162,7 +162,7 @@ func (s Service) CustomerWrite(ctx context.Context, id string, access *orders.Ac
 		return false, orders.Conflict()
 	}
 	var busy bool
-	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_deliveries WHERE order_id=$1 AND lease_until>$2 UNION ALL SELECT 1 FROM account_supplier_orders WHERE order_id=$1 AND (lease_until>$2 OR state IN ('creating','unknown')) UNION ALL SELECT 1 FROM delivery_supplier_orders WHERE order_id=$1 AND (lease_until>$2 OR state IN ('creating','unknown','pending')) UNION ALL SELECT 1 FROM xgift_purchases WHERE order_id=$1 AND (lease_until>$2 OR state IN ('creating','unknown','pending')) UNION ALL SELECT 1 FROM recharge_orders WHERE order_id=$1 AND (financial_hold=1 OR lease_until>$2) UNION ALL SELECT 1 FROM payments WHERE order_id=$1 AND lease_until>$2)`, id, time.Now().UnixMilli()).Scan(&busy)
+	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM fulfillment_orders WHERE order_id=$1 AND execution_started AND status!='failed_safe' UNION ALL SELECT 1 FROM email_deliveries WHERE order_id=$1 AND lease_until>$2 UNION ALL SELECT 1 FROM account_supplier_orders WHERE order_id=$1 AND (lease_until>$2 OR state IN ('creating','unknown')) UNION ALL SELECT 1 FROM delivery_supplier_orders WHERE order_id=$1 AND (lease_until>$2 OR state IN ('creating','unknown','pending')) UNION ALL SELECT 1 FROM xgift_purchases WHERE order_id=$1 AND (lease_until>$2 OR state IN ('creating','unknown','pending')) UNION ALL SELECT 1 FROM recharge_orders WHERE order_id=$1 AND (financial_hold=1 OR lease_until>$2) UNION ALL SELECT 1 FROM payments WHERE order_id=$1 AND lease_until>$2)`, id, time.Now().UnixMilli()).Scan(&busy)
 	if e != nil {
 		return false, e
 	}
@@ -355,6 +355,13 @@ func (s Service) executeAs(ctx context.Context, token, id string, in AdminInput,
 	o, e := orders.Get(ctx, tx, c.OrderID, nil, true)
 	if e != nil {
 		return e
+	}
+	var bridgeBusy bool
+	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM fulfillment_orders WHERE order_id=$1 AND execution_started AND status!='failed_safe')`, o.ID).Scan(&bridgeBusy); e != nil {
+		return e
+	}
+	if bridgeBusy {
+		return fault.New(409, "充值已开始，请先核对卡台扣款和订阅结果，暂不能执行退款。")
 	}
 	if c.Status != "approved" || c.Version != *in.Version || c.Approved == nil || o.Hold != 1 || o.Refunded+*c.Approved > o.Price {
 		return orders.Conflict()

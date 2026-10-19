@@ -1,0 +1,31 @@
+http:
+  routers:
+    gptibo-shop-http:
+      rule: Host(`shop.aichongzhi.best`)
+      priority: 20000
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+      service: gptibo-shop-web
+    gptibo-shop-api:
+      rule: Host(`shop.aichongzhi.best`) && PathPrefix(`/api/`)
+      priority: 21000
+      entryPoints: [websecure]
+      service: gptibo-shop-api
+      tls:
+        certResolver: letsencrypt
+    gptibo-shop-web:
+      rule: Host(`shop.aichongzhi.best`)
+      priority: 20000
+      entryPoints: [websecure]
+      service: gptibo-shop-web
+      tls:
+        certResolver: letsencrypt
+  services:
+    gptibo-shop-api:
+      loadBalancer:
+        servers:
+          - url: http://172.17.0.1:18793
+    gptibo-shop-web:
+      loadBalancer:
+        servers:
+          - url: http://172.17.0.1:13211

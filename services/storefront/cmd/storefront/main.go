@@ -141,6 +141,13 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	mailSender, _ := httpConfig.Auth.Sender.(mailer.Sender)
+	fulfillmentService, err := config.LoadFulfillment()
+	if err != nil {
+		return err
+	}
+	if fulfillmentService != nil {
+		fulfillmentService.Store = s
+	}
 	rechargeService, err := config.LoadRecharge()
 	if err != nil {
 		return err
@@ -241,6 +248,9 @@ func run(logger *slog.Logger) error {
 		if procurementService.AccountSupplier != nil || procurementService.DeliverySupplier != nil {
 			jobs = append(jobs, worker.Job{Name: "procurement", Wake: true, Interval: 5 * time.Second, Timeout: 4 * time.Minute, Run: procurementService.Reconcile})
 		}
+		if fulfillmentService != nil {
+			jobs = append(jobs, worker.Job{Name: "fulfillment-sync", Interval: 15 * time.Second, Timeout: 45 * time.Second, Run: fulfillmentService.Reconcile})
+		}
 		if rechargeService != nil {
 			jobs = append(jobs, worker.Job{Name: "recharge-active", Wake: true, Interval: 5 * time.Second, Timeout: 45 * time.Second, Run: rechargeService.ReconcileActive})
 			jobs = append(jobs, worker.Job{Name: "recharge-orders", Interval: 5 * time.Minute, Timeout: 4 * time.Minute, Run: rechargeService.Reconcile})
@@ -263,7 +273,7 @@ func run(logger *slog.Logger) error {
 		return worker.Run(ctx, s, cfg.WorkerID, logger, jobs...)
 	}
 	gin.SetMode(gin.ReleaseMode)
-	server := &http.Server{Addr: cfg.ListenAddr, Handler: httpapi.Router(s, cfg.WorkerID, logger, httpapi.Options{AdminAccess: httpConfig.AdminAccess, SecurityAudit: auditService, Turnstile: httpConfig.Turnstile, AuthTurnstile: httpConfig.AuthTurnstile, OrderProtection: true, TrafficProtection: httpConfig.TrafficProtection, Domains: domainService, Rehearsal: httpConfig.Rehearsal, Origin: httpConfig.Origin, Auth: identity, TrustedProxies: httpConfig.TrustedProxies, OrderTesting: httpConfig.OrderTesting, Payments: &paymentService, PaymentTesting: httpConfig.PaymentTesting, MailSender: mailSender, AdminEmail: httpConfig.Auth.AdminEmail, Recharge: rechargeService, Procurement: procurementService, XGift: xgiftService, Telegram: telegramClient, LegacyBuyer: httpConfig.LegacyBuyer}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	server := &http.Server{Addr: cfg.ListenAddr, Handler: httpapi.Router(s, cfg.WorkerID, logger, httpapi.Options{Fulfillment: fulfillmentService, AdminAccess: httpConfig.AdminAccess, SecurityAudit: auditService, Turnstile: httpConfig.Turnstile, AuthTurnstile: httpConfig.AuthTurnstile, OrderProtection: true, TrafficProtection: httpConfig.TrafficProtection, Domains: domainService, Rehearsal: httpConfig.Rehearsal, Origin: httpConfig.Origin, Auth: identity, TrustedProxies: httpConfig.TrustedProxies, OrderTesting: httpConfig.OrderTesting, Payments: &paymentService, PaymentTesting: httpConfig.PaymentTesting, MailSender: mailSender, AdminEmail: httpConfig.Auth.AdminEmail, Recharge: rechargeService, Procurement: procurementService, XGift: xgiftService, Telegram: telegramClient, LegacyBuyer: httpConfig.LegacyBuyer}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	done := make(chan error, 1)
 	go func() {
 		logger.Info("storefront API started", "address", cfg.ListenAddr)

@@ -116,7 +116,7 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 		}
 		// Order preparation and fulfillment can make several bounded supplier calls.
 		// Leave time for the whole chain, not just its first 10-second request.
-		if c.Request.Method == http.MethodPost && (c.FullPath() == "/api/orders" || c.FullPath() == "/api/orders/:id/fulfillment") || strings.Contains(c.FullPath(), "/xgift/") || c.FullPath() == "/api/admin/orders/:id/actions" || c.FullPath() == "/api/admin/recharge/reconcile" {
+		if c.Request.Method == http.MethodPost && (c.FullPath() == "/api/orders" || c.FullPath() == "/api/orders/:id/fulfillment" || c.FullPath() == "/api/orders/:id/delivery-link") || strings.Contains(c.FullPath(), "/xgift/") || c.FullPath() == "/api/admin/orders/:id/actions" || c.FullPath() == "/api/admin/recharge/reconcile" {
 			timeout = 45 * time.Second
 		}
 		if c.FullPath() == "/api/orders/:id/session-precheck" || c.FullPath() == "/api/admin/orders/:id/recharge-retry" {
@@ -560,6 +560,22 @@ func register(r *gin.Engine, s *store.Store, opts Options) {
 		orderService.RecoverGift = opts.XGift.Recover
 		registerXGift(group, admin, opts.XGift, token)
 	}
+	if opts.Fulfillment != nil {
+		previousPlan, previousSnapshot := orderService.LivePlan, orderService.LiveSnapshot
+		orderService.LivePlan = func(plan string) bool {
+			return opts.Fulfillment.Enabled(plan) || (previousPlan != nil && previousPlan(plan))
+		}
+		orderService.LiveSnapshot = func(ctx context.Context, tx pgx.Tx, o orders.Order, in orders.CreateInput) error {
+			if opts.Fulfillment.Enabled(o.Plan) {
+				return opts.Fulfillment.Snapshot(ctx, tx, o, in)
+			}
+			if previousSnapshot == nil {
+				return orders.Conflict()
+			}
+			return previousSnapshot(ctx, tx, o, in)
+		}
+	}
+	registerFulfillment(r, group, orderService, opts.Fulfillment, token)
 	registerOrders(group, admin, orderService, token)
 	registerRecharge(r, group, admin, orderService, opts.Recharge, token)
 }

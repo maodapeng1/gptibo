@@ -218,6 +218,8 @@ func (s *Store) GrantRuntime(ctx context.Context, role, password string) error {
 		"GRANT INSERT ON " + sc + ".crm_subscriptions TO " + r,
 		"GRANT INSERT,UPDATE ON " + sc + ".visitor_days TO " + r,
 		"GRANT INSERT,DELETE ON " + sc + ".launch_interest TO " + r,
+		"GRANT INSERT,UPDATE ON " + sc + ".fulfillment_orders TO " + r,
+		"GRANT INSERT,DELETE ON " + sc + ".fulfillment_nonces TO " + r,
 		"GRANT INSERT,UPDATE ON " + sc + ".orders," + sc + ".recharge_reminders TO " + r,
 		"GRANT INSERT,UPDATE ON " + sc + ".partner_notification_settings," + sc + ".partner_order_notifications TO " + r,
 		"GRANT INSERT,UPDATE ON " + sc + ".partner_payout_accounts TO " + r,

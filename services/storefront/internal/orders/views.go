@@ -48,6 +48,7 @@ func (s Service) renderView(o Order, admin bool, related viewRelations) (map[str
 		out["smsPhone"] = *o.Phone
 	}
 	out["paymentSummary"] = related.payment
+	out["commerceDelivery"] = related.commerce
 	contacts := related.contacts
 	out["supportContacts"] = contacts
 	supplier := related.supplier

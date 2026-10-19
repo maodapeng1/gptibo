@@ -1,0 +1,19 @@
+# Merge with compose.yaml after configuring .env and .secrets/fulfillment-secret.
+services:
+  api:
+    environment:
+      FULFILLMENT_ENABLED: "true"
+      FULFILLMENT_ORIGIN: https://relay.aichongzhi.best
+      FULFILLMENT_SECRET_FILE: /run/secrets/fulfillment_secret
+      FULFILLMENT_PRODUCT_MAP: '{"plus":{"plan":"chatgptplusplan","region":"PH"}}'
+    secrets: [app_password, auth_secret, fulfillment_secret]
+  worker:
+    environment:
+      FULFILLMENT_ENABLED: "true"
+      FULFILLMENT_ORIGIN: https://relay.aichongzhi.best
+      FULFILLMENT_SECRET_FILE: /run/secrets/fulfillment_secret
+      FULFILLMENT_PRODUCT_MAP: '{"plus":{"plan":"chatgptplusplan","region":"PH"}}'
+    secrets: [app_password, auth_secret, fulfillment_secret]
+secrets:
+  fulfillment_secret:
+    file: .secrets/fulfillment-secret

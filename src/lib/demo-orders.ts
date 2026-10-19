@@ -19,7 +19,7 @@ export const PLANS = [
 export const ORDER_PLANS = [...PLANS, { id: 'pro', productId: 'chatgpt', name: 'Pro', price: 800, renewalOnly: false }] as const
 export type PlanId = typeof ORDER_PLANS[number]['id']
 export type OrderStatus = 'pending' | 'session' | 'processing' | 'success' | 'failed' | 'cancelled'
-export type DemoOrder = { id: string; plan: PlanId; price: number; createdAt: number; status: OrderStatus; startedAt?: number; outcome?: 'success' | 'failed'; smsPhone?: string; customerEmail?: string | null; refundedCents?: number; platformStatus?: PlatformOrderStatus | null; refundHold?: boolean; redemptionBlocked?: boolean }
+export type DemoOrder = { commerceDelivery?: {status:string;message:string}|null; id: string; plan: PlanId; price: number; createdAt: number; status: OrderStatus; startedAt?: number; outcome?: 'success' | 'failed'; smsPhone?: string; customerEmail?: string | null; refundedCents?: number; platformStatus?: PlatformOrderStatus | null; refundHold?: boolean; redemptionBlocked?: boolean }
 export type OrderAction = 'pay' | 'acquire-phone' | 'submit-success' | 'submit-failed' | 'settle' | 'retry' | 'cancel'
 export const ORDER_LABELS: Record<OrderStatus, string> = { pending: '待付款', session: '待提交凭据', processing: '充值中', success: '已完成', failed: '需重新提交', cancelled: '已关闭' }
 export function orderLabel(order: DemoOrder & { manualFulfillment?: boolean; fulfillment?: { paymentExpired?: boolean; rechargeStatus?: string | null } }): string {

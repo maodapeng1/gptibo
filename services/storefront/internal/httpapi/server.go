@@ -18,17 +18,19 @@ import (
 	"gptibo/storefront/internal/catalog"
 	"gptibo/storefront/internal/delivery"
 	"gptibo/storefront/internal/domains"
+	"gptibo/storefront/internal/fulfillment"
 	"gptibo/storefront/internal/mailer"
 	"gptibo/storefront/internal/payments"
 	"gptibo/storefront/internal/procurement"
+	"gptibo/storefront/internal/recharge"
 	"gptibo/storefront/internal/securityaudit"
 	"gptibo/storefront/internal/store"
 	"gptibo/storefront/internal/telegram"
-	"gptibo/storefront/internal/recharge"
 	"gptibo/storefront/internal/xgift"
 )
 
 type Options struct {
+	Fulfillment       *fulfillment.Service
 	AdminAccess       *access.Service
 	SecurityAudit     *securityaudit.Service
 	Turnstile         *turnstile.Service
@@ -41,7 +43,7 @@ type Options struct {
 	Telegram          *telegram.Client
 	XGift             *xgift.Service
 	Procurement       *procurement.Service
-	Recharge              *recharge.Service
+	Recharge          *recharge.Service
 	MailSender        mailer.Sender
 	AdminEmail        string
 	PaymentTesting    bool
@@ -207,6 +209,21 @@ func Router(s *store.Store, workerID string, logger *slog.Logger, options ...Opt
 				}
 			}
 			return plans
+		}
+		if opts.Fulfillment != nil {
+			previousAvailability := cs.Availability
+			cs.Availability = func(ctx context.Context, plans []catalog.Plan) []catalog.Plan {
+				original := append([]catalog.Plan(nil), plans...)
+				if previousAvailability != nil {
+					plans = previousAvailability(ctx, plans)
+				}
+				for i := range plans {
+					if opts.Fulfillment.Enabled(plans[i].ID) {
+						plans[i].Enabled = original[i].Enabled
+					}
+				}
+				return plans
+			}
 		}
 		out, err := cs.Read(ctx, storePartner(c, c.Query("partner")))
 		if errors.Is(err, catalog.ErrShopUnavailable) {
